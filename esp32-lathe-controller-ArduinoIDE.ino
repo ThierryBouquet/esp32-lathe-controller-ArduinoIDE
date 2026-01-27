@@ -44,6 +44,11 @@ static const char* INDEX_HTML =
 "load();\n"
 "</script></body></html>";
 
+static void apply_brightness() {
+  // For now: always use manual slider value; auto mode mapping will come later
+  hal_display_set_brightness(g_state.bright_manual);
+}
+
 void handleRoot() {
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html", INDEX_HTML);
@@ -63,8 +68,12 @@ void handleConfigPut() {
   StaticJsonDocument<256> doc;
   DeserializationError err = deserializeJson(doc, server.arg("plain"));
   if (err) { server.send(400, "text/plain", "Bad JSON"); return; }
-  if (doc.containsKey("bright_auto"))  g_state.bright_auto  = doc["bright_auto"].as<bool>();
+  if (doc.containsKey("bright_auto"))   g_state.bright_auto   = doc["bright_auto"].as<bool>();
   if (doc.containsKey("bright_manual")) g_state.bright_manual = (uint16_t)doc["bright_manual"].as<int>();
+
+  // Immediately apply brightness to the VFD
+  apply_brightness();
+
   server.send(200, "text/plain", "OK");
 }
 
@@ -91,6 +100,7 @@ void startWeb() {
 void setup() {
   // Serial.begin(115200);
   hal_display_init();
+  apply_brightness();    // set initial brightness from defaults/state
   startWiFiAP();
   startWeb();
 }
@@ -98,7 +108,7 @@ void setup() {
 void loop() {
   server.handleClient();
   unsigned long now = millis();
-  if (now - lastDrawMs >= 100) { // ~10 Hz
+  if (now - lastDrawMs >= 250) { // ~4 Hz to reduce visible flicker
     lastDrawMs = now;
     drawVfd();
   }
