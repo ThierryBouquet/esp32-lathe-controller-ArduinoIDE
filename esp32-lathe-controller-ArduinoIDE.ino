@@ -108,7 +108,7 @@ void setup() {
 void loop() {
   server.handleClient();
   unsigned long now = millis();
-  if (now - lastDrawMs >= 250) { // ~4 Hz to reduce visible flicker
+  if (now - lastDrawMs >= 100) { // ~10 Hz to reduce visible flicker
     lastDrawMs = now;
     drawVfd();
   }
