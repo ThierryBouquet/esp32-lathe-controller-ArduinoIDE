@@ -1,0 +1,16 @@
+﻿# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.code-workspace
+
+# Arduino/ESP32 build artifacts
+build/
+*.bin
+*.elf
+*.map
+*.zip
+
+# Misc
+*.log
