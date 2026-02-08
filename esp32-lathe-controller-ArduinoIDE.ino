@@ -152,10 +152,28 @@ void drawVfd() {
   hal_display_draw_lathe();
 }
 
-void startWiFiAP() {
-  WiFi.mode(WIFI_AP);
-  bool ok = WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
-  (void)ok;
+void startWiFiSTA() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  Serial.print("Connecting to WiFi");
+  // Wait up to 10 seconds for connection
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  Serial.println();
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    g_state.wifi_connected = true;
+    Serial.print("Connected! IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    g_state.wifi_connected = false;
+    Serial.println("WiFi connection failed - check credentials");
+  }
 }
 
 void startWeb() {
@@ -166,22 +184,41 @@ void startWeb() {
 }
 
 void setup() {
-  // Serial.begin(115200);
+  Serial.begin(115200);
+  delay(500);  // Give serial time to initialize
+  Serial.println("\n\n");
+  Serial.println("=====================================");
+  Serial.println("ESP32 Lathe Controller Starting...");
+  Serial.println("=====================================");
   
   // Initialize display first
+  Serial.println("Initializing display...");
   hal_display_init();
   apply_brightness();
+  Serial.println("Display initialized");
   
-  // Initialize WiFi and start NTP
-  startWiFiAP();
-  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  g_state.wifi_connected = true;  // AP mode, so we're "connected"
+  // Connect to WiFi network
+  Serial.print("WiFi SSID: ");
+  Serial.println(WIFI_SSID);
+  startWiFiSTA();
+  
+  // Initialize NTP time sync (only works if WiFi connected)
+  if (g_state.wifi_connected) {
+    Serial.println("Configuring NTP...");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  }
   
   // Start web server
+  Serial.println("Starting web server...");
   startWeb();
+  Serial.println("Web server started");
   
   // Initialize time
   updateTime();
+  
+  Serial.println("=====================================");
+  Serial.println("Setup complete!");
+  Serial.println("=====================================");
 }
 
 void loop() {

@@ -19,6 +19,6 @@
 #define PIN_FILAMENT  14
 #define PIN_LDR       10
 
-// WiFi defaults (AP mode for zero-dependency bring-up)
-#define WIFI_AP_SSID      "ESP32-Lathe"
-#define WIFI_AP_PASSWORD  "lathe1234"   // set to "" for open AP
+// WiFi defaults (Station mode - connects to your network)
+#define WIFI_SSID      "Zyxel_338D"     // Change to your WiFi network name
+#define WIFI_PASSWORD  "p3pabjnf8m4h7f8e" // Change to your WiFi password

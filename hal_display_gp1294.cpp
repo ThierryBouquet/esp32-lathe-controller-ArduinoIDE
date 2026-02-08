@@ -100,12 +100,11 @@ void hal_display_draw_lathe() {
   // === MODE-DEPENDENT FRAMES AND INDICATORS ===
   if (!g_state.mode_css) {
     // RPM MODE ACTIVE
-    // RPM mode indicator frame - inverted filled box
-    u8g2.setDrawColor(2);
+    // RPM mode indicator - filled rounded box
+    u8g2.setDrawColor(1);
     u8g2.drawRBox(81, 0, 42, 23, 3);
     
-    // CSS mode indicator frame - outline only
-    u8g2.setDrawColor(1);
+    // CSS mode indicator - rounded outline only
     u8g2.drawRFrame(81, 25, 42, 23, 3);
     
     // RPM indicator bar - filled
@@ -115,16 +114,14 @@ void hal_display_draw_lathe() {
     u8g2.drawFrame(125, 26, CSS_indicator_frame_w, 21);
   } else {
     // CSS MODE ACTIVE
-    // RPM mode indicator frame - outline only
+    // RPM mode indicator - rounded outline only
     u8g2.setDrawColor(1);
     u8g2.drawRFrame(81, 0, 42, 23, 3);
     
-    // CSS mode indicator frame - inverted filled box
-    u8g2.setDrawColor(2);
+    // CSS mode indicator - filled rounded box
     u8g2.drawRBox(81, 25, 42, 23, 3);
     
     // RPM indicator bar - outline only
-    u8g2.setDrawColor(1);
     u8g2.drawFrame(125, 1, RPM_indicator_frame_w, 21);
     
     // CSS indicator bar - filled
