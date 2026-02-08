@@ -19,6 +19,16 @@
 #define PIN_FILAMENT  14
 #define PIN_LDR       10
 
+// Spindle motor state input
+#define PIN_SPINDLE_MOTOR  3
+
+// RS485 / Modbus RTU for DRO (Hardware Serial 2)
+#define PIN_RS485_TX  17
+#define PIN_RS485_RX  16
+#define PIN_RS485_DE  4   // Driver Enable (DE/RE tied together)
+#define DRO_MODBUS_ADDR  1
+#define DRO_BAUD_RATE    9600
+
 // WiFi defaults (Station mode - connects to your network)
 #define WIFI_SSID      "Zyxel_338D"     // Change to your WiFi network name
 #define WIFI_PASSWORD  "p3pabjnf8m4h7f8e" // Change to your WiFi password

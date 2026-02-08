@@ -9,9 +9,13 @@
 lathe_state_t g_state = {
   .rpm_meas = 0, .rpm_set = 0, .css_v = 0, .dia_mm = 0,
   .mode_css = false, .spindle_on = false,
+  .spindle_motor_on = false,
   .bright_auto = false, .bright_manual = 200,
   .test_rpm = 2950, .test_css = 230,
+  .rpm_setpoint = 3000, .css_setpoint = 250,
   .test_x_coord = -2.54, .test_z_coord = -0.89,
+  .dro_x_pos = 0.0, .dro_z_pos = 0.0,
+  .dro_connected = false,
   .wifi_connected = true,
   .time_text = "--:--:--"
 };
@@ -20,7 +24,113 @@ WebServer server(80);
 unsigned long lastDrawMs = 0;
 unsigned long lastTimeUpdate = 0;
 unsigned long lastWiFiCheck = 0;
+unsigned long lastDroRead = 0;
 bool ntpConfigured = false;
+
+// Calculate Modbus CRC16
+uint16_t modbuscrc(uint8_t *buf, int len) {
+  uint16_t crc = 0xFFFF;
+  for (int pos = 0; pos < len; pos++) {
+    crc ^= (uint16_t)buf[pos];
+    for (int i = 8; i != 0; i--) {
+      if ((crc & 0x0001) != 0) {
+        crc >>= 1;
+        crc ^= 0xA001;
+      } else {
+        crc >>= 1;
+      }
+    }
+  }
+  return crc;
+}
+
+// Read 32-bit signed position from DRO via Modbus RTU
+float readDroPosition(uint16_t regAddress) {
+  uint8_t request[8];
+  request[0] = DRO_MODBUS_ADDR;  // Slave address
+  request[1] = 0x03;              // Function code 03 (Read Holding Registers)
+  request[2] = (regAddress >> 8) & 0xFF;  // Register address high byte
+  request[3] = regAddress & 0xFF;         // Register address low byte
+  request[4] = 0x00;              // Number of registers high byte
+  request[5] = 0x02;              // Number of registers low byte (2 = 32 bits)
+  
+  uint16_t crc = modbuscrc(request, 6);
+  request[6] = crc & 0xFF;        // CRC low byte
+  request[7] = (crc >> 8) & 0xFF; // CRC high byte
+  
+  // Set RS485 to transmit mode
+  digitalWrite(PIN_RS485_DE, HIGH);
+  delayMicroseconds(100);
+  
+  // Send request
+  Serial2.write(request, 8);
+  Serial2.flush();
+  
+  // Set RS485 to receive mode
+  delayMicroseconds(100);
+  digitalWrite(PIN_RS485_DE, LOW);
+  
+  // Wait for response (timeout after 500ms)
+  unsigned long startTime = millis();
+  while (Serial2.available() < 9 && (millis() - startTime) < 500) {
+    delay(1);
+  }
+  
+  if (Serial2.available() >= 9) {
+    uint8_t response[9];
+    Serial2.readBytes(response, 9);
+    
+    // Verify response
+    if (response[0] == DRO_MODBUS_ADDR && response[1] == 0x03 && response[2] == 0x04) {
+      // Verify CRC
+      uint16_t receivedCrc = response[7] | (response[8] << 8);
+      uint16_t calculatedCrc = modbuscrc(response, 7);
+      
+      if (receivedCrc == calculatedCrc) {
+        // Extract 32-bit signed value
+        int32_t rawValue = ((int32_t)response[3] << 24) | 
+                          ((int32_t)response[4] << 16) | 
+                          ((int32_t)response[5] << 8) | 
+                          response[6];
+        // Convert to float (assuming 0.01mm resolution)
+        return rawValue / 100.0;
+      }
+    }
+  }
+  
+  // Clear any remaining bytes
+  while (Serial2.available()) {
+    Serial2.read();
+  }
+  
+  return 0.0; // Return 0 on error
+}
+
+// Read both X and Z positions from DRO
+void updateDroPositions() {
+  // Read X axis (Shaft A - 0x1000)
+  float x_pos = readDroPosition(0x1000);
+  
+  // Small delay between reads
+  delay(10);
+  
+  // Read Z axis (Shaft B - 0x1100)
+  float z_pos = readDroPosition(0x1100);
+  
+  // Check if at least one read was successful (non-zero or valid)
+  // This is a simple check - you might want more sophisticated error detection
+  if (x_pos != 0.0 || z_pos != 0.0) {
+    g_state.dro_connected = true;
+    g_state.dro_x_pos = x_pos;
+    g_state.dro_z_pos = z_pos;
+    
+    // Update display coordinates with DRO values
+    g_state.test_x_coord = x_pos;
+    g_state.test_z_coord = z_pos;
+  } else {
+    g_state.dro_connected = false;
+  }
+}
 
 // NTP Configuration
 const char* ntpServer = "pool.ntp.org";
@@ -68,6 +178,8 @@ static const char* INDEX_HTML =
 "<div class='test-section'><h3>🧪 Testing Controls</h3>"
 "<div class='slider-row'><label>RPM:</label><input id='rpm' type='range' min='0' max='6000' step='1'><span id='rpmVal'></span></div>"
 "<div class='slider-row'><label>CSS:</label><input id='css' type='range' min='0' max='500' step='1'><span id='cssVal'></span></div>"
+"<div class='slider-row'><label>RPM Setpoint:</label><input id='rpmSetpoint' type='range' min='0' max='6000' step='1'><span id='rpmSetpointVal'></span></div>"
+"<div class='slider-row'><label>CSS Setpoint:</label><input id='cssSetpoint' type='range' min='0' max='500' step='1'><span id='cssSetpointVal'></span></div>"
 "<div class='slider-row'><label>X Coordinate:</label><input id='xcoord' type='range' min='-999.99' max='999.99' step='0.01'><span id='xVal'></span></div>"
 "<div class='slider-row'><label>Z Coordinate:</label><input id='zcoord' type='range' min='-99.99' max='99.99' step='0.01'><span id='zVal'></span></div>"
 "<label>WiFi Status: <span id='wifiStatus' style='font-weight:bold'></span></label>"
@@ -86,6 +198,8 @@ static const char* INDEX_HTML =
 "  document.getElementById('lv').textContent=s.bright_manual;\n"
 "  document.getElementById('rpm').value=s.test_rpm;document.getElementById('rpmVal').textContent=s.test_rpm+' RPM';\n"
 "  document.getElementById('css').value=s.test_css;document.getElementById('cssVal').textContent=s.test_css+' CSS';\n"
+"  document.getElementById('rpmSetpoint').value=s.rpm_setpoint;document.getElementById('rpmSetpointVal').textContent=s.rpm_setpoint+' RPM';\n"
+"  document.getElementById('cssSetpoint').value=s.css_setpoint;document.getElementById('cssSetpointVal').textContent=s.css_setpoint+' CSS';\n"
 "  document.getElementById('xcoord').value=s.test_x_coord;document.getElementById('xVal').textContent=s.test_x_coord+' mm';\n"
 "  document.getElementById('zcoord').value=s.test_z_coord;document.getElementById('zVal').textContent=s.test_z_coord+' mm';\n"
 "  document.getElementById('wifiStatus').textContent=s.wifi_connected?'Connected ✓':'Disconnected ✗';\n"
@@ -99,18 +213,23 @@ static const char* INDEX_HTML =
 "  bright_manual:parseInt(document.getElementById('level').value),\n"
 "  test_rpm:parseInt(document.getElementById('rpm').value),\n"
 "  test_css:parseInt(document.getElementById('css').value),\n"
+"  rpm_setpoint:parseInt(document.getElementById('rpmSetpoint').value),\n"
+"  css_setpoint:parseInt(document.getElementById('cssSetpoint').value),\n"
 "  test_x_coord:parseFloat(document.getElementById('xcoord').value),\n"
+"  test_z_coord:parseFloat(document.getElementById('zcoord').value),\n"
 "  mode_css:document.getElementById('modeToggle').checked\n"
 "};\n"
 "  await fetch('/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});\n"
 "  load();\n"
 "}\n"
-"['auto','level','rpm','css','xcoord','zcoord','modeToggle'].forEach(id=>{\n"
+"['auto','level','rpm','css','rpmSetpoint','cssSetpoint','xcoord','zcoord','modeToggle'].forEach(id=>{\n"
 "  const el=document.getElementById(id);\n"
 "  el.addEventListener('input',e=>{\n"
 "    if(id==='level') document.getElementById('lv').textContent=e.target.value;\n"
 "    if(id==='rpm') document.getElementById('rpmVal').textContent=e.target.value+' RPM';\n"
 "    if(id==='css') document.getElementById('cssVal').textContent=e.target.value+' CSS';\n"
+"    if(id==='rpmSetpoint') document.getElementById('rpmSetpointVal').textContent=e.target.value+' RPM';\n"
+"    if(id==='cssSetpoint') document.getElementById('cssSetpointVal').textContent=e.target.value+' CSS';\n"
 "    if(id==='xcoord') document.getElementById('xVal').textContent=e.target.value+' mm';\n"
 "    if(id==='zcoord') document.getElementById('zVal').textContent=e.target.value+' mm';\n"
 "    if(id==='auto') document.getElementById('manualRow').style.display=e.target.checked?'none':'flex';\n"
@@ -137,6 +256,8 @@ void handleStatus() {
   doc["mode_css"] = g_state.mode_css;
   doc["test_rpm"] = g_state.test_rpm;
   doc["test_css"] = g_state.test_css;
+  doc["rpm_setpoint"] = g_state.rpm_setpoint;
+  doc["css_setpoint"] = g_state.css_setpoint;
   doc["test_x_coord"] = g_state.test_x_coord;
   doc["test_z_coord"] = g_state.test_z_coord;
   doc["wifi_connected"] = g_state.wifi_connected;
@@ -155,6 +276,8 @@ void handleConfigPut() {
   if (doc.containsKey("bright_manual")) g_state.bright_manual = (uint16_t)doc["bright_manual"].as<int>();
   if (doc.containsKey("test_rpm"))      g_state.test_rpm      = (uint16_t)doc["test_rpm"].as<int>();
   if (doc.containsKey("test_css"))      g_state.test_css      = (uint16_t)doc["test_css"].as<int>();
+  if (doc.containsKey("rpm_setpoint"))  g_state.rpm_setpoint  = (uint16_t)doc["rpm_setpoint"].as<int>();
+  if (doc.containsKey("css_setpoint"))  g_state.css_setpoint  = (uint16_t)doc["css_setpoint"].as<int>();
   if (doc.containsKey("test_x_coord"))  g_state.test_x_coord  = doc["test_x_coord"].as<float>();
   if (doc.containsKey("test_z_coord"))  g_state.test_z_coord  = doc["test_z_coord"].as<float>();
   if (doc.containsKey("mode_css"))      g_state.mode_css      = doc["mode_css"].as<bool>();
@@ -206,6 +329,18 @@ void setup() {
   Serial.println("ESP32 Lathe Controller Starting...");
   Serial.println("=====================================");
   
+  // Initialize spindle motor input pin
+  pinMode(PIN_SPINDLE_MOTOR, INPUT);
+  Serial.println("Spindle motor input pin initialized");
+  
+  // Initialize RS485 direction control pin
+  pinMode(PIN_RS485_DE, OUTPUT);
+  digitalWrite(PIN_RS485_DE, LOW); // Receive mode by default
+  
+  // Initialize Serial2 for Modbus communication with DRO
+  Serial2.begin(DRO_BAUD_RATE, SERIAL_8N1, PIN_RS485_RX, PIN_RS485_TX);
+  Serial.println("Modbus RTU Serial initialized for DRO");
+  
   // Initialize display first
   Serial.println("Initializing display...");
   hal_display_init();
@@ -239,6 +374,15 @@ void loop() {
   server.handleClient();
   
   unsigned long now = millis();
+  
+  // Read spindle motor state
+  g_state.spindle_motor_on = digitalRead(PIN_SPINDLE_MOTOR);
+  
+  // Read DRO positions every 200ms (only if spindle motor is on)
+  if (g_state.spindle_motor_on && (now - lastDroRead >= 200)) {
+    lastDroRead = now;
+    updateDroPositions();
+  }
   
   // Check WiFi status every 500ms (lightweight check)
   if (now - lastWiFiCheck >= 500) {
