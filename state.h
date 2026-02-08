@@ -11,6 +11,14 @@ typedef struct {
   bool  bright_auto;
   uint16_t bright_manual; // 0..500 (GP1294 safe cap)
   bright_map_t bmap;      // not used in Step-1
+  
+  // Testing and display variables
+  uint16_t test_rpm;      // 0-6000 (for testing)
+  uint16_t test_css;      // 0-500 (for testing)
+  float test_x_coord;     // -999.99 to 999.99 (for testing)
+  float test_z_coord;     // -99.99 to 99.99 (for testing)
+  bool wifi_connected;    // WiFi connection status
+  char time_text[16];     // Current time HH:MM:SS
 } lathe_state_t;
 
 typedef struct {
