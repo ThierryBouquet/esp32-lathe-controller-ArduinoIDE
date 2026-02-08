@@ -1,4 +1,26 @@
-﻿# OS/editor
+﻿/.pio
+/build
+/.vscode
+/.idea
+/.vs
+/.arduino15
+*.elf
+*.bin
+*.hex
+*.eep
+*.map
+*.log
+*.o
+*.a
+*.dll
+*.exe
+*.tmp
+libdeps/
+/.cache
+/.pioenvs
+/.DS_Store
+*.zip
+# OS/editor
 .DS_Store
 Thumbs.db
 .vscode/
