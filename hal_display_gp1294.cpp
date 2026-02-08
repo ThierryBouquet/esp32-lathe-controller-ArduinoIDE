@@ -48,13 +48,6 @@ void hal_display_init() {
   u8g2.setPowerSave(0);
   u8g2.setContrast(140);
   last_contrast = 140;
-
-  // Splash screen
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_profont22_tr);
-  u8g2.drawStr(60, 25, "ESP32 Lathe");
-  u8g2.sendBuffer();
-  delay(1000);
 }
 
 extern lathe_state_t g_state;

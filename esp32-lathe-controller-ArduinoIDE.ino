@@ -13,26 +13,46 @@ lathe_state_t g_state = {
   .test_rpm = 2950, .test_css = 230,
   .test_x_coord = -2.54, .test_z_coord = -0.89,
   .wifi_connected = true,
-  .time_text = "00:00:00"
+  .time_text = "--:--:--"
 };
 
 WebServer server(80);
 unsigned long lastDrawMs = 0;
 unsigned long lastTimeUpdate = 0;
+unsigned long lastWiFiCheck = 0;
+bool ntpConfigured = false;
 
 // NTP Configuration
 const char* ntpServer = "pool.ntp.org";
-const long gmtOffset_sec = 0;        // Change to your timezone offset in seconds
-const int daylightOffset_sec = 0;    // Change for daylight saving time
+const long gmtOffset_sec = 3600;        // Switzerland: UTC+1 (CET)
+const int daylightOffset_sec = 3600;    // +1 hour for daylight saving (CEST)
 
 void updateTime() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
+  // Only try to get time if WiFi is connected
+  if (!g_state.wifi_connected) {
     strcpy(g_state.time_text, "--:--:--");
     return;
   }
+  
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 50)) {  // Very short 50ms timeout
+    strcpy(g_state.time_text, "--:--:--");
+    Serial.println("DEBUG: getLocalTime failed");
+    return;
+  }
+  
+  // Check if time is actually synced (year should be > 2020)
+  if (timeinfo.tm_year + 1900 < 2020) {
+    strcpy(g_state.time_text, "--:--:--");
+    Serial.print("DEBUG: Time not synced yet, year: ");
+    Serial.println(timeinfo.tm_year + 1900);
+    return;
+  }
+  
   snprintf(g_state.time_text, sizeof(g_state.time_text), "%02d:%02d:%02d", 
            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+  Serial.print("DEBUG: Time updated: ");
+  Serial.println(g_state.time_text);
 }
 
 static const char* INDEX_HTML =
@@ -50,7 +70,7 @@ static const char* INDEX_HTML =
 "<div class='slider-row'><label>CSS:</label><input id='css' type='range' min='0' max='500' step='1'><span id='cssVal'></span></div>"
 "<div class='slider-row'><label>X Coordinate:</label><input id='xcoord' type='range' min='-999.99' max='999.99' step='0.01'><span id='xVal'></span></div>"
 "<div class='slider-row'><label>Z Coordinate:</label><input id='zcoord' type='range' min='-99.99' max='99.99' step='0.01'><span id='zVal'></span></div>"
-"<label><input id='wifiToggle' type='checkbox'> WiFi Connected</label>"
+"<label>WiFi Status: <span id='wifiStatus' style='font-weight:bold'></span></label>"
 "<label><input id='modeToggle' type='checkbox'> CSS Mode (unchecked = RPM Mode)</label>"
 "</div>"
 ""
@@ -68,7 +88,8 @@ static const char* INDEX_HTML =
 "  document.getElementById('css').value=s.test_css;document.getElementById('cssVal').textContent=s.test_css+' CSS';\n"
 "  document.getElementById('xcoord').value=s.test_x_coord;document.getElementById('xVal').textContent=s.test_x_coord+' mm';\n"
 "  document.getElementById('zcoord').value=s.test_z_coord;document.getElementById('zVal').textContent=s.test_z_coord+' mm';\n"
-"  document.getElementById('wifiToggle').checked=s.wifi_connected;\n"
+"  document.getElementById('wifiStatus').textContent=s.wifi_connected?'Connected ✓':'Disconnected ✗';\n"
+"  document.getElementById('wifiStatus').style.color=s.wifi_connected?'green':'red';\n"
 "  document.getElementById('modeToggle').checked=s.mode_css;\n"
 "  document.getElementById('manualRow').style.display=s.bright_auto?'none':'flex';\n"
 "  document.getElementById('status').textContent=JSON.stringify(s,null,2);\n"
@@ -79,14 +100,12 @@ static const char* INDEX_HTML =
 "  test_rpm:parseInt(document.getElementById('rpm').value),\n"
 "  test_css:parseInt(document.getElementById('css').value),\n"
 "  test_x_coord:parseFloat(document.getElementById('xcoord').value),\n"
-"  test_z_coord:parseFloat(document.getElementById('zcoord').value),\n"
-"  wifi_connected:document.getElementById('wifiToggle').checked,\n"
 "  mode_css:document.getElementById('modeToggle').checked\n"
 "};\n"
 "  await fetch('/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});\n"
 "  load();\n"
 "}\n"
-"['auto','level','rpm','css','xcoord','zcoord','wifiToggle','modeToggle'].forEach(id=>{\n"
+"['auto','level','rpm','css','xcoord','zcoord','modeToggle'].forEach(id=>{\n"
 "  const el=document.getElementById(id);\n"
 "  el.addEventListener('input',e=>{\n"
 "    if(id==='level') document.getElementById('lv').textContent=e.target.value;\n"
@@ -138,7 +157,6 @@ void handleConfigPut() {
   if (doc.containsKey("test_css"))      g_state.test_css      = (uint16_t)doc["test_css"].as<int>();
   if (doc.containsKey("test_x_coord"))  g_state.test_x_coord  = doc["test_x_coord"].as<float>();
   if (doc.containsKey("test_z_coord"))  g_state.test_z_coord  = doc["test_z_coord"].as<float>();
-  if (doc.containsKey("wifi_connected")) g_state.wifi_connected = doc["wifi_connected"].as<bool>();
   if (doc.containsKey("mode_css"))      g_state.mode_css      = doc["mode_css"].as<bool>();
 
   // Immediately apply brightness to the VFD
@@ -156,24 +174,14 @@ void startWiFiSTA() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
-  Serial.print("Connecting to WiFi");
-  // Wait up to 10 seconds for connection
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  Serial.println();
+  Serial.print("WiFi connecting in background to SSID: ");
+  Serial.println(WIFI_SSID);
+  Serial.print("Password length: ");
+  Serial.println(strlen(WIFI_PASSWORD));
   
-  if (WiFi.status() == WL_CONNECTED) {
-    g_state.wifi_connected = true;
-    Serial.print("Connected! IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    g_state.wifi_connected = false;
-    Serial.println("WiFi connection failed - check credentials");
-  }
+  // Non-blocking - WiFi will connect in background
+  // Connection status is checked in loop()
+  g_state.wifi_connected = false;
 }
 
 void startWeb() {
@@ -185,8 +193,15 @@ void startWeb() {
 
 void setup() {
   Serial.begin(115200);
-  delay(500);  // Give serial time to initialize
-  Serial.println("\n\n");
+  delay(1000);  // Longer delay for serial to stabilize
+  
+  // Send multiple newlines and test message
+  Serial.println();
+  Serial.println();
+  Serial.println();
+  Serial.println("*** SERIAL TEST ***");
+  Serial.println("*** SERIAL TEST ***");
+  Serial.println("*** SERIAL TEST ***");
   Serial.println("=====================================");
   Serial.println("ESP32 Lathe Controller Starting...");
   Serial.println("=====================================");
@@ -202,11 +217,10 @@ void setup() {
   Serial.println(WIFI_SSID);
   startWiFiSTA();
   
-  // Initialize NTP time sync (only works if WiFi connected)
-  if (g_state.wifi_connected) {
-    Serial.println("Configuring NTP...");
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  }
+  // Configure NTP - will work once WiFi connects
+  Serial.println("Configuring NTP (will sync once WiFi connected)...");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  ntpConfigured = true;
   
   // Start web server
   Serial.println("Starting web server...");
@@ -226,10 +240,36 @@ void loop() {
   
   unsigned long now = millis();
   
-  // Update time every second
-  if (now - lastTimeUpdate >= 1000) {
+  // Check WiFi status every 500ms (lightweight check)
+  if (now - lastWiFiCheck >= 500) {
+    lastWiFiCheck = now;
+    bool currentWiFiStatus = (WiFi.status() == WL_CONNECTED);
+    if (currentWiFiStatus != g_state.wifi_connected) {
+      g_state.wifi_connected = currentWiFiStatus;
+      if (currentWiFiStatus) {
+        Serial.print("WiFi connected! IP: ");
+        Serial.println(WiFi.localIP());
+        // Re-configure NTP in case it wasn't set up before
+        if (!ntpConfigured) {
+          configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+          ntpConfigured = true;
+          Serial.println("NTP configured after WiFi connection");
+        }
+      } else {
+        Serial.println("WiFi disconnected");
+        strcpy(g_state.time_text, "--:--:--");
+      }
+    }
+  }
+  
+  // Update time every 5 seconds (non-blocking)
+  if (now - lastTimeUpdate >= 5000) {
     lastTimeUpdate = now;
-    updateTime();
+    if (g_state.wifi_connected) {
+      updateTime();
+    } else {
+      strcpy(g_state.time_text, "--:--:--");
+    }
   }
   
   // Update display at ~10Hz to reduce flicker
