@@ -183,8 +183,8 @@ void hal_display_draw_lathe() {
   // === MODE LABELS ===
   u8g2.setFont(u8g2_font_profont22_tr);
   u8g2.setDrawColor(2);
-  u8g2.drawStr(84, 18, "RPM");
-  u8g2.drawStr(84, 43, "CSS");
+  u8g2.drawStr(85, 18, "RPM");
+  u8g2.drawStr(85, 43, "CSS");
   
   // === ICONS ===
   u8g2.setDrawColor(1);
@@ -193,9 +193,9 @@ void hal_display_draw_lathe() {
   
   // WiFi icon (conditional)
   if (g_state.wifi_connected) {
-    u8g2.drawXBM(3, 29, 19, 16, image_wifi_full_bits);
+    u8g2.drawXBM(3, 28, 19, 16, image_wifi_full_bits);
   } else {
-    u8g2.drawXBM(3, 29, 19, 16, image_wifi_not_connected_bits);
+    u8g2.drawXBM(3, 28, 19, 16, image_wifi_not_connected_bits);
   }
   
   // === TEXT VALUES ===

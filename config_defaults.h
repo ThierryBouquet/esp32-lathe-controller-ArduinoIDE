@@ -15,9 +15,9 @@
 #define PIN_DISP_MOSI 13
 #define PIN_DISP_CLK  12
 #define PIN_DISP_CS   11
-#define PIN_DISP_RST  9
+#define PIN_DISP_RST  10
 #define PIN_FILAMENT  14
-#define PIN_LDR       10
+#define PIN_LDR       9
 
 // Spindle motor state input
 #define PIN_SPINDLE_MOTOR  3
@@ -25,7 +25,7 @@
 // RS485 / Modbus RTU for DRO (Hardware Serial 2)
 #define PIN_RS485_TX  17
 #define PIN_RS485_RX  16
-#define PIN_RS485_DE  4   // Driver Enable (DE/RE tied together)
+#define PIN_RS485_DE  15   // Driver Enable (DE/RE tied together)
 #define DRO_MODBUS_ADDR  1
 #define DRO_BAUD_RATE    9600
 

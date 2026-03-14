@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ESPmDNS.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include "state.h"
@@ -295,6 +296,7 @@ void drawVfd() {
 
 void startWiFiSTA() {
   WiFi.mode(WIFI_STA);
+  WiFi.setHostname("esp32-lathe");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   Serial.print("WiFi connecting in background to SSID: ");
@@ -393,6 +395,16 @@ void loop() {
       if (currentWiFiStatus) {
         Serial.print("WiFi connected! IP: ");
         Serial.println(WiFi.localIP());
+        
+        // Start mDNS responder
+        if (MDNS.begin("esp32-lathe")) {
+          Serial.println("mDNS responder started");
+          Serial.println("Access via: http://esp32-lathe.local/");
+          MDNS.addService("http", "tcp", 80);
+        } else {
+          Serial.println("Error starting mDNS");
+        }
+        
         // Re-configure NTP in case it wasn't set up before
         if (!ntpConfigured) {
           configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
