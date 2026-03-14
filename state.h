@@ -8,18 +8,20 @@ typedef struct {
   float rpm_meas, rpm_set, css_v, dia_mm;
   bool  mode_css, spindle_on;
   bool  spindle_motor_on;  // Physical spindle motor state from GPIO
+  
+  // Spindle motor control
+  uint16_t speed_pot_raw;  // Raw ADC value from potentiometer (0-4095)
+  uint8_t  pwm_duty;       // Current PWM duty cycle (0-255)
+  float    speed_percent;  // Speed as percentage (0-100%)
+  
   // brightness
   bool  bright_auto;
   uint16_t bright_manual; // 0..500 (GP1294 safe cap)
   bright_map_t bmap;      // not used in Step-1
   
-  // Testing and display variables
-  uint16_t test_rpm;      // 0-6000 (for testing)
-  uint16_t test_css;      // 0-500 (for testing)
+  // Setpoints (user configurable)
   uint16_t rpm_setpoint;  // 0-6000 (RPM setpoint)
   uint16_t css_setpoint;  // 0-500 (CSS setpoint)
-  float test_x_coord;     // -999.99 to 999.99 (for testing)
-  float test_z_coord;     // -99.99 to 99.99 (for testing)
   
   // DRO actual positions (from Modbus)
   float dro_x_pos;        // X axis position from DRO

@@ -11,13 +11,12 @@ lathe_state_t g_state = {
   .rpm_meas = 0, .rpm_set = 0, .css_v = 0, .dia_mm = 0,
   .mode_css = false, .spindle_on = false,
   .spindle_motor_on = false,
+  .speed_pot_raw = 0, .pwm_duty = 0, .speed_percent = 0.0,
   .bright_auto = false, .bright_manual = 200,
-  .test_rpm = 2950, .test_css = 230,
   .rpm_setpoint = 3000, .css_setpoint = 250,
-  .test_x_coord = -2.54, .test_z_coord = -0.89,
   .dro_x_pos = 0.0, .dro_z_pos = 0.0,
   .dro_connected = false,
-  .wifi_connected = true,
+  .wifi_connected = false,
   .time_text = "--:--:--"
 };
 
@@ -27,6 +26,16 @@ unsigned long lastTimeUpdate = 0;
 unsigned long lastWiFiCheck = 0;
 unsigned long lastDroRead = 0;
 bool ntpConfigured = false;
+
+// RPM measurement variables
+volatile unsigned long rpmPulseCount = 0;
+volatile unsigned long lastPulseTime = 0;
+const unsigned long RPM_CALC_INTERVAL = 1000; // Calculate RPM every 1 second
+
+void IRAM_ATTR rpmPulseISR() {
+  rpmPulseCount++;
+  lastPulseTime = millis();
+}
 
 // Calculate Modbus CRC16
 uint16_t modbuscrc(uint8_t *buf, int len) {
@@ -71,10 +80,10 @@ float readDroPosition(uint16_t regAddress) {
   delayMicroseconds(100);
   digitalWrite(PIN_RS485_DE, LOW);
   
-  // Wait for response (timeout after 500ms)
+  // Wait for response (timeout after 50ms)
   unsigned long startTime = millis();
-  while (Serial2.available() < 9 && (millis() - startTime) < 500) {
-    delay(1);
+  while (Serial2.available() < 9 && (millis() - startTime) < 50) {
+    delayMicroseconds(100);
   }
   
   if (Serial2.available() >= 9) {
@@ -113,7 +122,7 @@ void updateDroPositions() {
   float x_pos = readDroPosition(0x1000);
   
   // Small delay between reads
-  delay(10);
+  delay(2);
   
   // Read Z axis (Shaft B - 0x1100)
   float z_pos = readDroPosition(0x1100);
@@ -124,10 +133,6 @@ void updateDroPositions() {
     g_state.dro_connected = true;
     g_state.dro_x_pos = x_pos;
     g_state.dro_z_pos = z_pos;
-    
-    // Update display coordinates with DRO values
-    g_state.test_x_coord = x_pos;
-    g_state.test_z_coord = z_pos;
   } else {
     g_state.dro_connected = false;
   }
@@ -168,81 +173,136 @@ void updateTime() {
 
 static const char* INDEX_HTML =
 "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>ESP32 Lathe</title><style>body{font:16px system-ui;margin:20px}label{display:block;margin:.5em 0}input[type=range]{width:100%}"
-".row{display:flex;gap:1em;align-items:center} .pill{padding:.25em .6em;border:1px solid #ccc;border-radius:999px}"
-".slider-row{display:grid;grid-template-columns:150px 1fr 80px;gap:1em;align-items:center;margin:0.5em 0}"
-".test-section{background:#f5f5f5;padding:1em;margin:1em 0;border-radius:8px}"
+"<title>ESP32 Lathe</title><style>body{font:16px system-ui;margin:20px}label{display:block;margin:.5em 0}"
+".info-section{background:#f5f5f5;padding:1em;margin:1em 0;border-radius:8px}"
+".status-section{background:#e8f4f8;padding:1em;margin:1em 0;border-radius:8px}"
 "</style></head><body>"
-"<h2>ESP32 Lathe – WebUI</h2>"
-"<div class='pill'>VFD animations: on-device only. WebUI is static.</div>"
+"<h2>ESP32 Lathe Controller</h2>"
 ""
-"<div class='test-section'><h3>🧪 Testing Controls</h3>"
-"<div class='slider-row'><label>RPM:</label><input id='rpm' type='range' min='0' max='6000' step='1'><span id='rpmVal'></span></div>"
-"<div class='slider-row'><label>CSS:</label><input id='css' type='range' min='0' max='500' step='1'><span id='cssVal'></span></div>"
-"<div class='slider-row'><label>RPM Setpoint:</label><input id='rpmSetpoint' type='range' min='0' max='6000' step='1'><span id='rpmSetpointVal'></span></div>"
-"<div class='slider-row'><label>CSS Setpoint:</label><input id='cssSetpoint' type='range' min='0' max='500' step='1'><span id='cssSetpointVal'></span></div>"
-"<div class='slider-row'><label>X Coordinate:</label><input id='xcoord' type='range' min='-999.99' max='999.99' step='0.01'><span id='xVal'></span></div>"
-"<div class='slider-row'><label>Z Coordinate:</label><input id='zcoord' type='range' min='-99.99' max='99.99' step='0.01'><span id='zVal'></span></div>"
-"<label>WiFi Status: <span id='wifiStatus' style='font-weight:bold'></span></label>"
-"<label><input id='modeToggle' type='checkbox'> CSS Mode (unchecked = RPM Mode)</label>"
+"<div class='status-section'><h3>📊 Live Measurements</h3>"
+"<label>Mode: <span id='mode' style='font-weight:bold'></span></label>"
+"<label>Measured RPM: <span id='measuredRpm' style='font-weight:bold'>0</span></label>"
+"<label>Calculated CSS: <span id='calculatedCss' style='font-weight:bold'>0</span> m/min</label>"
+"<label>Diameter: <span id='diameter' style='font-weight:bold'>0</span> mm</label>"
+"<label>DRO X Position: <span id='droX' style='font-weight:bold'>0.00</span> mm</label>"
+"<label>DRO Z Position: <span id='droZ' style='font-weight:bold'>0.00</span> mm</label>"
+"<label>DRO Status: <span id='droStatus' style='font-weight:bold'></span></label>"
 "</div>"
 ""
-"<section><h3>Brightness</h3>"
-"<label><input id='auto' type='checkbox'> Auto mode</label>"
-"<div id='manualRow' class='row'><label>Manual level: <span id='lv'></span></label><input id='level' type='range' min='0' max='500' step='1'></div>"
-"</section>"
+"<div class='info-section'><h3>⚙️ Motor Control</h3>"
+"<label>Spindle Switch: <span id='spindleSwitch' style='font-weight:bold'></span></label>"
+"<label>Speed Setting: <span id='speedPercent' style='font-weight:bold'>0</span>%</label>"
+"<label>PWM Duty: <span id='pwmDuty' style='font-weight:bold'>0</span>/255</label>"
+"</div>"
+""
+"<div class='info-section'><h3>🎯 Setpoints</h3>"
+"<label>RPM Setpoint: <span id='rpmSetpoint' style='font-weight:bold'>0</span> RPM</label>"
+"<label>CSS Setpoint: <span id='cssSetpoint' style='font-weight:bold'>0</span> m/min</label>"
+"</div>"
+""
+"<div class='info-section'><h3>System</h3>"
+"<label>WiFi: <span id='wifiStatus' style='font-weight:bold'></span></label>"
+"<label>Time: <span id='time' style='font-weight:bold'>--:--:--</span></label>"
+"</div>"
+""
+"<div class='info-section'><h3>Brightness</h3>"
+"<label>Mode: <span id='brightMode' style='font-weight:bold'></span></label>"
+"<label>Level: <span id='brightLevel' style='font-weight:bold'>0</span></label>"
+"</div>"
 "<pre id='status'></pre>"
 "<script>\n"
 "async function load(){const s=await fetch('/status').then(r=>r.json());\n"
-"  document.getElementById('auto').checked=s.bright_auto;\n"
-"  document.getElementById('level').value=s.bright_manual;\n"
-"  document.getElementById('lv').textContent=s.bright_manual;\n"
-"  document.getElementById('rpm').value=s.test_rpm;document.getElementById('rpmVal').textContent=s.test_rpm+' RPM';\n"
-"  document.getElementById('css').value=s.test_css;document.getElementById('cssVal').textContent=s.test_css+' CSS';\n"
-"  document.getElementById('rpmSetpoint').value=s.rpm_setpoint;document.getElementById('rpmSetpointVal').textContent=s.rpm_setpoint+' RPM';\n"
-"  document.getElementById('cssSetpoint').value=s.css_setpoint;document.getElementById('cssSetpointVal').textContent=s.css_setpoint+' CSS';\n"
-"  document.getElementById('xcoord').value=s.test_x_coord;document.getElementById('xVal').textContent=s.test_x_coord+' mm';\n"
-"  document.getElementById('zcoord').value=s.test_z_coord;document.getElementById('zVal').textContent=s.test_z_coord+' mm';\n"
+"  document.getElementById('mode').textContent=s.mode_css?'CSS Mode':'RPM Mode';\n"
+"  document.getElementById('mode').style.color=s.mode_css?'blue':'green';\n"
+"  document.getElementById('measuredRpm').textContent=Math.round(s.rpm_meas);\n"
+"  document.getElementById('calculatedCss').textContent=s.css_v.toFixed(1);\n"
+"  document.getElementById('diameter').textContent=s.dia_mm.toFixed(2);\n"
+"  document.getElementById('droX').textContent=s.dro_x_pos.toFixed(2);\n"
+"  document.getElementById('droZ').textContent=s.dro_z_pos.toFixed(2);\n"
+"  document.getElementById('droStatus').textContent=s.dro_connected?'Connected ✓':'Disconnected ✗';\n"
+"  document.getElementById('droStatus').style.color=s.dro_connected?'green':'red';\n"
+"  document.getElementById('rpmSetpoint').textContent=s.rpm_setpoint;\n"
+"  document.getElementById('cssSetpoint').textContent=s.css_setpoint;\n"
 "  document.getElementById('wifiStatus').textContent=s.wifi_connected?'Connected ✓':'Disconnected ✗';\n"
 "  document.getElementById('wifiStatus').style.color=s.wifi_connected?'green':'red';\n"
-"  document.getElementById('modeToggle').checked=s.mode_css;\n"
-"  document.getElementById('manualRow').style.display=s.bright_auto?'none':'flex';\n"
+"  document.getElementById('time').textContent=s.time;\n"
+"  document.getElementById('spindleSwitch').textContent=s.spindle_motor_on?'ON ✓':'OFF ✗';\n"
+"  document.getElementById('spindleSwitch').style.color=s.spindle_motor_on?'green':'red';\n"
+"  document.getElementById('speedPercent').textContent=s.speed_percent.toFixed(1);\n"
+"  document.getElementById('pwmDuty').textContent=s.pwm_duty;\n"
+"  document.getElementById('brightMode').textContent=s.bright_auto?'Auto':'Manual';\n"
+"  document.getElementById('brightLevel').textContent=s.bright_manual;\n"
 "  document.getElementById('status').textContent=JSON.stringify(s,null,2);\n"
 "}\n"
-"async function save(){const body={\n"
-"  bright_auto:document.getElementById('auto').checked,\n"
-"  bright_manual:parseInt(document.getElementById('level').value),\n"
-"  test_rpm:parseInt(document.getElementById('rpm').value),\n"
-"  test_css:parseInt(document.getElementById('css').value),\n"
-"  rpm_setpoint:parseInt(document.getElementById('rpmSetpoint').value),\n"
-"  css_setpoint:parseInt(document.getElementById('cssSetpoint').value),\n"
-"  test_x_coord:parseFloat(document.getElementById('xcoord').value),\n"
-"  test_z_coord:parseFloat(document.getElementById('zcoord').value),\n"
-"  mode_css:document.getElementById('modeToggle').checked\n"
-"};\n"
-"  await fetch('/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});\n"
-"  load();\n"
-"}\n"
-"['auto','level','rpm','css','rpmSetpoint','cssSetpoint','xcoord','zcoord','modeToggle'].forEach(id=>{\n"
-"  const el=document.getElementById(id);\n"
-"  el.addEventListener('input',e=>{\n"
-"    if(id==='level') document.getElementById('lv').textContent=e.target.value;\n"
-"    if(id==='rpm') document.getElementById('rpmVal').textContent=e.target.value+' RPM';\n"
-"    if(id==='css') document.getElementById('cssVal').textContent=e.target.value+' CSS';\n"
-"    if(id==='rpmSetpoint') document.getElementById('rpmSetpointVal').textContent=e.target.value+' RPM';\n"
-"    if(id==='cssSetpoint') document.getElementById('cssSetpointVal').textContent=e.target.value+' CSS';\n"
-"    if(id==='xcoord') document.getElementById('xVal').textContent=e.target.value+' mm';\n"
-"    if(id==='zcoord') document.getElementById('zVal').textContent=e.target.value+' mm';\n"
-"    if(id==='auto') document.getElementById('manualRow').style.display=e.target.checked?'none':'flex';\n"
-"    save();\n"
-"  });\n"
-"});\n"
 "load();\n"
+"setInterval(load,1000);\n"
 "</script></body></html>";
 
 static void apply_brightness() {
   // For now: always use manual slider value; auto mode mapping will come later
   hal_display_set_brightness(g_state.bright_manual);
+}
+
+void updateSpindleControl() {
+  // Read potentiometer (12-bit ADC: 0-4095)
+  g_state.speed_pot_raw = analogRead(PIN_SPEED_POT);
+  
+  // Convert to percentage (0-100%)
+  g_state.speed_percent = (g_state.speed_pot_raw / 4095.0) * 100.0;
+  
+  // Map to 8-bit PWM duty cycle (0-255)
+  g_state.pwm_duty = map(g_state.speed_pot_raw, 0, 4095, 0, 255);
+  
+  // Map potentiometer to RPM setpoint range
+  g_state.rpm_setpoint = map(g_state.speed_pot_raw, 0, 4095, DEF_RPM_MIN, DEF_RPM_MAX);
+  
+  // Only output PWM if spindle switch is ON
+  if (g_state.spindle_motor_on) {
+    ledcWrite(PIN_SPINDLE_PWM, g_state.pwm_duty);
+  } else {
+    ledcWrite(PIN_SPINDLE_PWM, 0); // Turn off PWM when switch is off
+  }
+}
+
+void calculateRPM() {
+  static unsigned long lastCalcTime = 0;
+  unsigned long currentTime = millis();
+  
+  // Calculate RPM every second
+  if (currentTime - lastCalcTime >= RPM_CALC_INTERVAL) {
+    unsigned long pulsesSinceLastCalc;
+    noInterrupts();
+    pulsesSinceLastCalc = rpmPulseCount;
+    rpmPulseCount = 0;
+    interrupts();
+    
+    // Calculate RPM: pulses per second * 60 / pulses per revolution, adjusted for belt ratio
+    g_state.rpm_meas = (pulsesSinceLastCalc * 60.0) / (RPM_CALC_INTERVAL / 1000.0) * DEF_BELT_RATIO;
+    
+    // If no pulses for 2 seconds, consider spindle stopped
+    if (currentTime - lastPulseTime > 2000) {
+      g_state.rpm_meas = 0;
+    }
+    
+    lastCalcTime = currentTime;
+  }
+}
+
+void calculateCSS() {
+  // CSS = π × diameter × RPM / 1000
+  // Using current diameter from DRO X position (absolute value as diameter)
+  if (g_state.dro_x_pos != 0) {
+    g_state.dia_mm = fabs(g_state.dro_x_pos) * 2.0; // X position is radius, diameter = 2*radius
+  } else {
+    g_state.dia_mm = 0;
+  }
+  
+  // Calculate CSS in m/min
+  if (g_state.rpm_meas > 0 && g_state.dia_mm > 0) {
+    g_state.css_v = (PI * g_state.dia_mm * g_state.rpm_meas) / 1000.0;
+  } else {
+    g_state.css_v = 0;
+  }
 }
 
 void handleRoot() {
@@ -255,39 +315,25 @@ void handleStatus() {
   doc["bright_auto"] = g_state.bright_auto;
   doc["bright_manual"] = g_state.bright_manual;
   doc["mode_css"] = g_state.mode_css;
-  doc["test_rpm"] = g_state.test_rpm;
-  doc["test_css"] = g_state.test_css;
+  doc["rpm_meas"] = g_state.rpm_meas;
+  doc["css_v"] = g_state.css_v;
+  doc["dia_mm"] = g_state.dia_mm;
   doc["rpm_setpoint"] = g_state.rpm_setpoint;
   doc["css_setpoint"] = g_state.css_setpoint;
-  doc["test_x_coord"] = g_state.test_x_coord;
-  doc["test_z_coord"] = g_state.test_z_coord;
+  doc["dro_x_pos"] = g_state.dro_x_pos;
+  doc["dro_z_pos"] = g_state.dro_z_pos;
+  doc["dro_connected"] = g_state.dro_connected;
   doc["wifi_connected"] = g_state.wifi_connected;
   doc["time"] = g_state.time_text;
+  doc["spindle_motor_on"] = g_state.spindle_motor_on;
+  doc["speed_pot_raw"] = g_state.speed_pot_raw;
+  doc["pwm_duty"] = g_state.pwm_duty;
+  doc["speed_percent"] = g_state.speed_percent;
   String out; serializeJson(doc, out);
   server.send(200, "application/json", out);
 }
 
-void handleConfigPut() {
-  if (!server.hasArg("plain")) { server.send(400, "text/plain", "Missing body"); return; }
-  StaticJsonDocument<512> doc;
-  DeserializationError err = deserializeJson(doc, server.arg("plain"));
-  if (err) { server.send(400, "text/plain", "Bad JSON"); return; }
-  
-  if (doc.containsKey("bright_auto"))   g_state.bright_auto   = doc["bright_auto"].as<bool>();
-  if (doc.containsKey("bright_manual")) g_state.bright_manual = (uint16_t)doc["bright_manual"].as<int>();
-  if (doc.containsKey("test_rpm"))      g_state.test_rpm      = (uint16_t)doc["test_rpm"].as<int>();
-  if (doc.containsKey("test_css"))      g_state.test_css      = (uint16_t)doc["test_css"].as<int>();
-  if (doc.containsKey("rpm_setpoint"))  g_state.rpm_setpoint  = (uint16_t)doc["rpm_setpoint"].as<int>();
-  if (doc.containsKey("css_setpoint"))  g_state.css_setpoint  = (uint16_t)doc["css_setpoint"].as<int>();
-  if (doc.containsKey("test_x_coord"))  g_state.test_x_coord  = doc["test_x_coord"].as<float>();
-  if (doc.containsKey("test_z_coord"))  g_state.test_z_coord  = doc["test_z_coord"].as<float>();
-  if (doc.containsKey("mode_css"))      g_state.mode_css      = doc["mode_css"].as<bool>();
 
-  // Immediately apply brightness to the VFD
-  apply_brightness();
-
-  server.send(200, "text/plain", "OK");
-}
 
 void drawVfd() {
   // Use the new graphical display function
@@ -312,7 +358,7 @@ void startWiFiSTA() {
 void startWeb() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/status", HTTP_GET, handleStatus);
-  server.on("/config", HTTP_PUT, handleConfigPut);
+
   server.begin();
 }
 
@@ -331,9 +377,31 @@ void setup() {
   Serial.println("ESP32 Lathe Controller Starting...");
   Serial.println("=====================================");
   
-  // Initialize spindle motor input pin
-  pinMode(PIN_SPINDLE_MOTOR, INPUT);
-  Serial.println("Spindle motor input pin initialized");
+  // Turn off onboard RGB LED (WS2812 on GPIO 48)
+  neopixelWrite(48, 0, 0, 0);
+  
+  // Initialize mode switch input pin
+  pinMode(PIN_MODE_SWITCH, INPUT_PULLUP);
+  Serial.println("Mode switch input pin initialized (pin 36)");
+  
+  // Initialize spindle motor switch input pin
+  pinMode(PIN_SPINDLE_SWITCH, INPUT_PULLUP);
+  Serial.println("Spindle motor switch input pin initialized (pin 3)");
+  
+  // Initialize spindle RPM input pin with interrupt
+  pinMode(PIN_SPINDLE_RPM, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(PIN_SPINDLE_RPM), rpmPulseISR, RISING);
+  Serial.println("Spindle RPM input pin initialized with interrupt (pin 46)");
+  
+  // Initialize PWM for spindle motor control
+  ledcAttach(PIN_SPINDLE_PWM, PWM_FREQUENCY, PWM_RESOLUTION);
+  ledcWrite(PIN_SPINDLE_PWM, 0); // Start with motor off
+  Serial.println("PWM channel configured for spindle motor (pin 8)");
+  
+  // Initialize ADC for speed potentiometer
+  pinMode(PIN_SPEED_POT, INPUT);
+  analogReadResolution(12); // Set ADC to 12-bit resolution (0-4095)
+  Serial.println("Speed potentiometer ADC initialized (pin 9)");
   
   // Initialize RS485 direction control pin
   pinMode(PIN_RS485_DE, OUTPUT);
@@ -377,11 +445,23 @@ void loop() {
   
   unsigned long now = millis();
   
-  // Read spindle motor state
-  g_state.spindle_motor_on = digitalRead(PIN_SPINDLE_MOTOR);
+  // Read mode switch (pin 3) - inverted: LOW = CSS, HIGH = RPM
+  g_state.mode_css = !digitalRead(PIN_MODE_SWITCH);
   
-  // Read DRO positions every 200ms (only if spindle motor is on)
-  if (g_state.spindle_motor_on && (now - lastDroRead >= 200)) {
+  // Read spindle on/off switch (pin 36): LOW = OFF, HIGH = ON
+  g_state.spindle_motor_on = digitalRead(PIN_SPINDLE_SWITCH);
+  
+  // Update spindle motor PWM based on potentiometer
+  updateSpindleControl();
+  
+  // Calculate RPM from pulse count
+  calculateRPM();
+  
+  // Calculate CSS based on RPM and diameter
+  calculateCSS();
+  
+  // Read DRO positions every 200ms
+  if (now - lastDroRead >= 200) {
     lastDroRead = now;
     updateDroPositions();
   }

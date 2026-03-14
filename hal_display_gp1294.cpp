@@ -105,10 +105,8 @@ void hal_display_init() {
   startupAnimation();
 }
 
-extern lathe_state_t g_state;
-
 void hal_display_draw_lathe() {
-  // Format text values
+  // Format text values - use actual measured/calculated values
   char CSS_value_text[8];
   char RPM_value_text[8];
   char RPM_setpoint_text[8];
@@ -116,16 +114,19 @@ void hal_display_draw_lathe() {
   char x_reading_text[12];
   char z_reading_text[12];
   
-  snprintf(CSS_value_text, sizeof(CSS_value_text), "%d", g_state.test_css);
-  snprintf(RPM_value_text, sizeof(RPM_value_text), "%d", g_state.test_rpm);
+  // Display actual measured RPM and calculated CSS
+  snprintf(CSS_value_text, sizeof(CSS_value_text), "%d", (int)g_state.css_v);
+  snprintf(RPM_value_text, sizeof(RPM_value_text), "%d", (int)g_state.rpm_meas);
   snprintf(RPM_setpoint_text, sizeof(RPM_setpoint_text), "%d", g_state.rpm_setpoint);
   snprintf(CSS_setpoint_text, sizeof(CSS_setpoint_text), "%d", g_state.css_setpoint);
-  snprintf(x_reading_text, sizeof(x_reading_text), "%+07.2f", g_state.test_x_coord);
-  snprintf(z_reading_text, sizeof(z_reading_text), "%+06.2f", g_state.test_z_coord);
+  
+  // Display actual DRO coordinates
+  snprintf(x_reading_text, sizeof(x_reading_text), "%+07.2f", g_state.dro_x_pos);
+  snprintf(z_reading_text, sizeof(z_reading_text), "%+06.2f", g_state.dro_z_pos);
   
   // Calculate indicator bar widths (0-130 pixels)
-  int RPM_indicator_frame_w = map(constrain(g_state.test_rpm, 0, 6000), 0, 6000, 0, 130);
-  int CSS_indicator_frame_w = map(constrain(g_state.test_css, 0, 500), 0, 500, 0, 130);
+  int RPM_indicator_frame_w = map(constrain((int)g_state.rpm_meas, 0, 6000), 0, 6000, 0, 130);
+  int CSS_indicator_frame_w = map(constrain((int)g_state.css_v, 0, 500), 0, 500, 0, 130);
   
   u8g2.clearBuffer();
   u8g2.setFontMode(1);

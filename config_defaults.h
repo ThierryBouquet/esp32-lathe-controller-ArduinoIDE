@@ -17,10 +17,18 @@
 #define PIN_DISP_CS   11
 #define PIN_DISP_RST  10
 #define PIN_FILAMENT  14
-#define PIN_LDR       9
+// PIN_LDR removed - pin 9 now used for speed potentiometer
 
-// Spindle motor state input
-#define PIN_SPINDLE_MOTOR  3
+// Spindle motor control
+#define PIN_SPINDLE_PWM    8   // PWM output to motor controller
+#define PIN_SPEED_POT      9   // ADC input for speed adjustment potentiometer
+#define PIN_MODE_SWITCH    3  // Digital input for mode switch (RPM/CSS)
+#define PIN_SPINDLE_SWITCH 36   // Digital input for spindle motor on/off switch
+#define PIN_SPINDLE_RPM    46  // Input to read spindle RPM pulses
+
+// PWM Configuration
+#define PWM_FREQUENCY   5000   // 5 kHz PWM frequency
+#define PWM_RESOLUTION     8   // 8-bit resolution (0-255)
 
 // RS485 / Modbus RTU for DRO (Hardware Serial 2)
 #define PIN_RS485_TX  17
