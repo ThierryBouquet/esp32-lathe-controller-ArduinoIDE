@@ -2,15 +2,14 @@
 #include "config_defaults.h"
 #include "state.h"
 #include <U8g2lib.h>
+#include <SPI.h>
 
-// U8g2 full buffer graphics mode for GP1294, software SPI
-// Signature: (clock, data, cs, dc, reset)
+// U8g2 full buffer graphics mode for GP1294, hardware SPI
 // GP1294AI does not use DC -> U8X8_PIN_NONE
-U8G2_GP1294AI_256X48_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ PIN_DISP_CLK,
-                                                /* data=*/  PIN_DISP_MOSI,
-                                                /* cs=*/    PIN_DISP_CS,
-                                                /* dc=*/    U8X8_PIN_NONE,
-                                                /* reset=*/ PIN_DISP_RST);
+U8G2_GP1294AI_256X48_F_4W_HW_SPI u8g2(U8G2_R0,
+                                       /* cs=*/    PIN_DISP_CS,
+                                       /* dc=*/    U8X8_PIN_NONE,
+                                       /* reset=*/ PIN_DISP_RST);
 
 // Static images (bitmaps)
 static const unsigned char image_clock_bits[] = {
@@ -96,6 +95,9 @@ void hal_display_init() {
   pinMode(PIN_FILAMENT, OUTPUT);
   digitalWrite(PIN_FILAMENT, HIGH); // enable filament
 
+  // Configure SPI bus with our display pins (ESP32-S3 GPIO matrix allows any pins)
+  SPI.begin(PIN_DISP_CLK, -1, PIN_DISP_MOSI, PIN_DISP_CS);
+
   u8g2.begin();
   u8g2.setPowerSave(0);
   u8g2.setContrast(140);
@@ -105,7 +107,7 @@ void hal_display_init() {
   startupAnimation();
 }
 
-void hal_display_draw_lathe() {
+void hal_display_draw_lathe(const lathe_state_t *s) {
   // Format text values - use actual measured/calculated values
   char CSS_value_text[8];
   char RPM_value_text[8];
@@ -115,18 +117,18 @@ void hal_display_draw_lathe() {
   char z_reading_text[12];
   
   // Display actual measured RPM and calculated CSS
-  snprintf(CSS_value_text, sizeof(CSS_value_text), "%d", (int)g_state.css_v);
-  snprintf(RPM_value_text, sizeof(RPM_value_text), "%d", (int)g_state.rpm_meas);
-  snprintf(RPM_setpoint_text, sizeof(RPM_setpoint_text), "%d", g_state.rpm_setpoint);
-  snprintf(CSS_setpoint_text, sizeof(CSS_setpoint_text), "%d", g_state.css_setpoint);
+  snprintf(CSS_value_text, sizeof(CSS_value_text), "%d", (int)s->css_v);
+  snprintf(RPM_value_text, sizeof(RPM_value_text), "%d", (int)s->rpm_meas);
+  snprintf(RPM_setpoint_text, sizeof(RPM_setpoint_text), "%d", s->rpm_setpoint);
+  snprintf(CSS_setpoint_text, sizeof(CSS_setpoint_text), "%d", s->css_setpoint);
   
   // Display actual DRO coordinates
-  snprintf(x_reading_text, sizeof(x_reading_text), "%+07.2f", g_state.dro_x_pos);
-  snprintf(z_reading_text, sizeof(z_reading_text), "%+06.2f", g_state.dro_z_pos);
+  snprintf(x_reading_text, sizeof(x_reading_text), "%+07.2f", s->dro_x_pos);
+  snprintf(z_reading_text, sizeof(z_reading_text), "%+07.2f", s->dro_z_pos);
   
   // Calculate indicator bar widths (0-130 pixels)
-  int RPM_indicator_frame_w = map(constrain((int)g_state.rpm_meas, 0, 6000), 0, 6000, 0, 130);
-  int CSS_indicator_frame_w = map(constrain((int)g_state.css_v, 0, 500), 0, 500, 0, 130);
+  int RPM_indicator_frame_w = map(constrain((int)s->rpm_meas, 0, 6000), 0, 6000, 0, 130);
+  int CSS_indicator_frame_w = map(constrain((int)s->css_v, 0, 500), 0, 500, 0, 130);
   
   u8g2.clearBuffer();
   u8g2.setFontMode(1);
@@ -151,7 +153,7 @@ void hal_display_draw_lathe() {
   u8g2.drawRFrame(124, 25, 132, 23, 3);
   
   // === MODE-DEPENDENT FRAMES AND INDICATORS ===
-  if (!g_state.mode_css) {
+  if (!s->mode_css) {
     // RPM MODE ACTIVE
     // RPM mode indicator - filled rounded box
     u8g2.setDrawColor(1);
@@ -193,7 +195,7 @@ void hal_display_draw_lathe() {
   u8g2.drawXBM(2, 4, 15, 16, image_clock_bits);
   
   // WiFi icon (conditional)
-  if (g_state.wifi_connected) {
+  if (s->wifi_connected) {
     u8g2.drawXBM(3, 28, 19, 16, image_wifi_full_bits);
   } else {
     u8g2.drawXBM(3, 28, 19, 16, image_wifi_not_connected_bits);
@@ -202,14 +204,14 @@ void hal_display_draw_lathe() {
   // === TEXT VALUES ===
   // Time
   u8g2.setFont(u8g2_font_profont15_tr);
-  u8g2.drawStr(20, 16, g_state.time_text);
+  u8g2.drawStr(20, 16, s->time_text);
   
   // Coordinate labels and values
   u8g2.setFont(u8g2_font_profont12_tr);
   u8g2.drawStr(30, 35, "X");
   u8g2.drawStr(30, 45, "Z");
   u8g2.drawStr(35, 35, x_reading_text);
-  u8g2.drawStr(41, 45, z_reading_text);
+  u8g2.drawStr(35, 45, z_reading_text);
   
   // RPM and CSS values
   u8g2.setFont(u8g2_font_profont22_tr);
