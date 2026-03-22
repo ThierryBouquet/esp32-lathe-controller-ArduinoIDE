@@ -24,7 +24,7 @@
 #define PIN_SPINDLE_PWM    8   // PWM output to motor controller
 #define PIN_SPEED_POT      9   // ADC input for speed adjustment potentiometer
 #define PIN_MODE_SWITCH    3  // Digital input for mode switch (RPM/CSS)
-#define PIN_SPINDLE_SWITCH 36   // Digital input for spindle motor on/off switch
+#define PIN_SPINDLE_SWITCH 19   // Digital input for spindle motor on/off switch
 #define PIN_SPINDLE_RPM    46  // Input to read spindle RPM pulses
 
 // PWM Configuration

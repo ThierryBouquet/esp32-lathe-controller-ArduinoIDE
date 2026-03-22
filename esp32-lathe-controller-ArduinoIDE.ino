@@ -590,7 +590,7 @@ void sensor_io_task(void *pvParameters) {
   for (;;) {
     uint16_t pot      = analogRead(PIN_SPEED_POT);
     bool mode_css     = !digitalRead(PIN_MODE_SWITCH);
-    bool spindle_on   = digitalRead(PIN_SPINDLE_SWITCH);
+    bool spindle_on   = !digitalRead(PIN_SPINDLE_SWITCH);  // HIGH = spindle off
 
     float pct = (pot / 4095.0f) * 100.0f;
 
@@ -927,7 +927,7 @@ void setup() {
 
   // ── GPIO setup ──────────────────────────────────────────────
   pinMode(PIN_MODE_SWITCH, INPUT_PULLUP);
-  pinMode(PIN_SPINDLE_SWITCH, INPUT_PULLUP);
+  pinMode(PIN_SPINDLE_SWITCH, INPUT_PULLDOWN);
   pinMode(PIN_SPINDLE_RPM, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_SPINDLE_RPM), rpmPulseISR, RISING);
 
